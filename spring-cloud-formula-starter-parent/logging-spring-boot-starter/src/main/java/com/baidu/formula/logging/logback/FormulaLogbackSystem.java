@@ -23,9 +23,9 @@ import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.CoreConstants;
-import com.baidu.formula.logging.config.Space;
-import com.baidu.formula.logging.config.Spec;
+import com.baidu.formula.logging.config.LoggingProperties;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.logging.LogFile;
 import org.springframework.boot.logging.LoggingInitializationContext;
 import org.springframework.boot.logging.logback.ColorConverter;
@@ -37,21 +37,15 @@ import org.springframework.core.env.MutablePropertySources;
 import org.springframework.util.StringUtils;
 
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- *
  * Yaml configuration based logback system implementation.
- *
+ * <p>
  * ruleRegistry configuration references to DefaultLogbackConfiguration
  *
- * @see org.springframework.boot.logging.logback.DefaultLogbackConfiguration
- *
  * @author Bowu Dong (tq02ksu@gmail.com)
+ * @see org.springframework.boot.logging.logback.DefaultLogbackConfiguration
  */
 public class FormulaLogbackSystem extends SpacedLogbackSystem {
     public static final org.slf4j.Logger logger = LoggerFactory.getLogger(FormulaLogbackSystem.class);
@@ -83,81 +77,18 @@ public class FormulaLogbackSystem extends SpacedLogbackSystem {
         ruleRegistry.put("wex", WhitespaceThrowableProxyConverter.class.getName());
         ruleRegistry.put("wEx", ExtendedWhitespaceThrowableProxyConverter.class.getName());
 
-        Spec defaultSpec = properties.getDefaultSpec();
-
+        if (appName == null) {
+            appName = "unknown-app";
+        }
         String rootLevel = initializationContext.getEnvironment().getProperty("logging.level.root");
         if (rootLevel == null) {
-            rootLevel = defaultSpec.getThreshold();
+            rootLevel = properties.getThreshold();
         }
+        Appender<ILoggingEvent> appender = fileAppender(properties);
+        Appender<ILoggingEvent> errorLogAppender = fileAppender(getErrorLogProperties(appName));
+        root(Level.valueOf(rootLevel), appender, errorLogAppender);
 
-        root(Level.valueOf(rootLevel));
-
-        Map<String, Space> spaces = properties.getSpaces().entrySet()
-                .stream()
-                .filter(entry -> entry.getValue().getEnabled())
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-        Map<String, Appender<ILoggingEvent>> appenders = spaces.entrySet()
-                .stream()
-                .peek(e -> e.getValue().setDefaultSpec(properties.getDefaultSpec()))
-                .peek(e -> {
-                    if (e.getValue().getSpec() == null) {
-                        e.getValue().setSpec(new Spec());
-                    }
-
-                    if (e.getValue().getName() == null) {
-                        e.getValue().setName(e.getKey());
-                    }
-                })
-                .collect(Collectors.toMap(Map.Entry::getKey, e -> fileAppender(e.getValue())));
-
-        Set<Logger> orphans = new HashSet<>();
-        for (Map.Entry<String, Space> entry : spaces.entrySet()) {
-            Appender<ILoggingEvent> appender = appenders.get(entry.getKey());
-            Space space = entry.getValue();
-
-            boolean additive = space.getSpec().getAddtivity() != null ? space.getSpec().getAddtivity()
-                    : defaultSpec.getAddtivity() != null ? defaultSpec.getAddtivity() : DEFAULT_ADDDTIVITY;
-
-            // loggers
-            space.getLoggers().forEach(loggerName -> {
-                loggerName = patterns.resolvePlaceholders(loggerName);
-                Logger logger = context.getLogger(loggerName);
-                if (!additive) {
-                    logger.setAdditive(false);
-                    orphans.add(logger);
-                }
-                logger.addAppender(appender);
-            });
-        }
-
-        // add appenders for addtivity=true spaces
-        spaces.entrySet().stream()
-                .filter(entry -> {
-                    if (entry.getValue().getSpec().getAddtivity() != null) {
-                        return entry.getValue().getSpec().getAddtivity();
-                    } else if (defaultSpec.getAddtivity() != null) {
-                        return defaultSpec.getAddtivity();
-                    } else {
-                        return DEFAULT_ADDDTIVITY;
-                    }
-                })
-                .forEach(entry -> {
-                    String name = entry.getKey();
-                    Space space = entry.getValue();
-                    Appender<ILoggingEvent> appender = appenders.get(name);
-                    orphans.stream().filter(orphan -> isFamily(space.getLoggers(), orphan))
-                            .forEach(orphan -> orphan.addAppender(appender));
-
-                });
         context.setPackagingDataEnabled(true);
-    }
-
-    // add appenders for orphan that don't like addivitity
-    private boolean isFamily(List<String> loggers, Logger orphan) {
-        return loggers.stream()
-                .anyMatch(logger -> logger.equalsIgnoreCase("ROOT")
-                        || orphan.getName().startsWith(logger + "."));
     }
 
     @Override
@@ -177,7 +108,10 @@ public class FormulaLogbackSystem extends SpacedLogbackSystem {
     private void beforeLoadSpaces(LoggingInitializationContext initializationContext) {
         ConfigurableEnvironment environment = (ConfigurableEnvironment) initializationContext.getEnvironment();
 
-        properties = parseProperties(environment);
+//        properties = parseProperties(environment);
+        properties = Binder.get(environment)
+                .bind(LoggingProperties.PREFIX, LoggingProperties.class)
+                .orElseGet(LoggingProperties::new);
         context = (LoggerContext) LoggerFactory.getILoggerFactory();
 
         patterns = getPatternsResolver(environment);
@@ -191,6 +125,7 @@ public class FormulaLogbackSystem extends SpacedLogbackSystem {
 
         String applicationName = environment.getProperty("spring.application.name");
         String configClientName = environment.getProperty("spring.cloud.config.name");
+        appName = applicationName;
 
         MapPropertySource defaultProperties;
         MutablePropertySources propertySources = environment.getPropertySources();
@@ -210,5 +145,22 @@ public class FormulaLogbackSystem extends SpacedLogbackSystem {
 
         String result = patterns.resolvePlaceholders(LOGGING_PATTERN_LEVEL);
         defaultProperties.getSource().put("logging.pattern.level", result);
+
+        String patternResult = patterns.resolvePlaceholders(FILE_LOG_PATTERN);
+        defaultProperties.getSource().put("logging.pattern.console", patternResult);
+
+        defaultProperties.getSource().put("logging.level.root", "info");
+    }
+
+    private LoggingProperties getErrorLogProperties(String appName) {
+        LoggingProperties errorLogProperties = new LoggingProperties();
+        errorLogProperties.setThreshold("error");
+        errorLogProperties.setFile(properties.getFile() == null ?
+                appName + "-error.log" : properties.getFile() + "-error.log");
+        errorLogProperties.setPath(properties.getPath());
+        errorLogProperties.setRollingFilePattern(DEFAULT_ERROR_FILE_PATTERN);
+        errorLogProperties.setMaxHistory(7);
+        errorLogProperties.setAppenderName(appName + "-error");
+        return errorLogProperties;
     }
 }

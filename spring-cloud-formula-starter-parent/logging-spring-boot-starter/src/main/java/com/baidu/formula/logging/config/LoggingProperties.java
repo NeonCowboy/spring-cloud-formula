@@ -15,22 +15,21 @@
  */
 package com.baidu.formula.logging.config;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * @author Bowu Dong (tq02ksu@gmail.com)
  */
 public class LoggingProperties {
-    public static final String PREFIX = "formula.logging";
+    public static final String PREFIX = "wayz.logging";
 
     private boolean enabled = true;
-
-    private boolean printStatus = false;
-
-    private Spec defaultSpec = new Spec();
-
-    private Map<String, Space> spaces = new HashMap<>();
+    private Integer maxHistory;
+    private String maxFileSize;
+    private String totalSizeCap;
+    private String threshold;
+    private String file;
+    private String path;
+    private String rollingFilePattern;
+    private String appenderName;
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
@@ -40,27 +39,71 @@ public class LoggingProperties {
         return enabled;
     }
 
-    public Spec getDefaultSpec() {
-        return defaultSpec;
+    public static String getPREFIX() {
+        return PREFIX;
     }
 
-    public void setDefaultSpec(Spec defaultSpec) {
-        this.defaultSpec = defaultSpec;
+    public Integer getMaxHistory() {
+        return maxHistory;
     }
 
-    public Map<String, Space> getSpaces() {
-        return spaces;
+    public void setMaxHistory(Integer maxHistory) {
+        this.maxHistory = maxHistory;
     }
 
-    public void setSpaces(Map<String, Space> spaces) {
-        this.spaces = spaces;
+    public String getMaxFileSize() {
+        return maxFileSize;
     }
 
-    public boolean isPrintStatus() {
-        return printStatus;
+    public void setMaxFileSize(String maxFileSize) {
+        this.maxFileSize = maxFileSize;
     }
 
-    public void setPrintStatus(boolean printStatus) {
-        this.printStatus = printStatus;
+    public String getTotalSizeCap() {
+        return totalSizeCap;
+    }
+
+    public void setTotalSizeCap(String totalSizeCap) {
+        this.totalSizeCap = totalSizeCap;
+    }
+
+    public String getThreshold() {
+        return threshold;
+    }
+
+    public void setThreshold(String threshold) {
+        this.threshold = threshold;
+    }
+
+    public String getFile() {
+        return file;
+    }
+
+    public void setFile(String file) {
+        this.file = file;
+    }
+
+    public String getPath() {
+        return path;
+    }
+
+    public void setPath(String path) {
+        this.path = path;
+    }
+
+    public String getRollingFilePattern() {
+        return rollingFilePattern;
+    }
+
+    public void setRollingFilePattern(String rollingFilexPattern) {
+        this.rollingFilePattern = rollingFilexPattern;
+    }
+
+    public String getAppenderName() {
+        return appenderName;
+    }
+
+    public void setAppenderName(String appenderName) {
+        this.appenderName = appenderName;
     }
 }

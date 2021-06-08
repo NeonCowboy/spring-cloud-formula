@@ -31,12 +31,10 @@ import ch.qos.logback.core.spi.LifeCycle;
 import ch.qos.logback.core.util.FileSize;
 import ch.qos.logback.core.util.OptionHelper;
 import com.baidu.formula.logging.config.LoggingProperties;
-import com.baidu.formula.logging.config.Space;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.logging.LogFile;
-import org.springframework.boot.logging.LoggingSystemProperties;
 import org.springframework.boot.logging.logback.LogbackLoggingSystem;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
@@ -56,28 +54,30 @@ import java.util.stream.StreamSupport;
  * Base logback configuration,
  * default log format references to DefaultLogbackConfiguration
  *
- * @see org.springframework.boot.logging.logback.DefaultLogbackConfiguration
  * @author Bowu Dong (tq02ksu@gmail.com)
+ * @see org.springframework.boot.logging.logback.DefaultLogbackConfiguration
  */
 public abstract class SpacedLogbackSystem extends LogbackLoggingSystem {
     private static final Logger logger = LoggerFactory.getLogger(SpacedLogbackSystem.class);
+
+    protected static final String LOGGER_NAME = "ai.wayz.cloud";
 
     protected static final String LOGGING_PATTERN_LEVEL =
             "%5p [${spring.cloud.config.name:${spring.application.name:-}},%X{X-B3-TraceId:-},%X{X-B3-SpanId:-},%X{X-Span-Export:-}]";
 
     protected static final String FILE_LOG_PATTERN =
-            "%d{${LOG_DATEFORMAT_PATTERN:-yyyy-MM-dd HH:mm:ss.SSS}} "
-                    + "${LOG_LEVEL_PATTERN:-%5p} ${PID:- } --- [%t] %-40.40logger{39} : "
-                    + "%m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}";
+            "%d [%t] %-5level %class{32}:%-4line - %msg%n%throwable";
 
     static final Charset DEFAULT_CHARSET = Charset.forName("UTF-8");
 
     public static final String KEY_ENABLED = "FORMULA_LOGGING_ENABLED";
     protected static final String DEFAULT_PATH = "log";
-    protected static final String DEFAULT_FILE_SIZE = "1GB";
+    protected static final String DEFAULT_FILE_SIZE = "250MB";
     protected static final int DEFAULT_MAX_HISTORY = 24 * 7;
-    protected static final String DEFAULT_TOTAL_SIZE_CAP = "30GB";
+    protected static final String DEFAULT_TOTAL_SIZE_CAP = "15GB";
     protected static final boolean DEFAULT_ADDDTIVITY = false;
+    protected static final String DEFAULT_FILE_PATTERN = "%d{yyyy-MM-dd-HH}-%i";
+    protected static final String DEFAULT_ERROR_FILE_PATTERN = "%d{yyyy-MM-dd}-%i";
 
     protected LoggerContext context;
 
@@ -86,6 +86,8 @@ public abstract class SpacedLogbackSystem extends LogbackLoggingSystem {
     protected PropertyResolver patterns;
 
     protected boolean checkPassed;
+
+    protected String appName;
 
     public SpacedLogbackSystem(ClassLoader classLoader) {
         super(classLoader);
@@ -116,12 +118,10 @@ public abstract class SpacedLogbackSystem extends LogbackLoggingSystem {
 
         if (isSet(environment, "trace")) {
             logger.info("debug mode, set default threshold to trace");
-            properties.getDefaultSpec().setThreshold("trace");
+            properties.setThreshold("trace");
         } else if (isSet(environment, "debug")) {
             logger.info("debug mode, set default threshold to debug");
-            properties.getDefaultSpec().setThreshold("debug");
-        } else {
-            properties.getDefaultSpec().setThreshold("info");
+            properties.setThreshold("debug");
         }
 
         return properties;
@@ -166,7 +166,7 @@ public abstract class SpacedLogbackSystem extends LogbackLoggingSystem {
         return appender;
     }
 
-    protected Appender<ILoggingEvent> fileAppender(Space space) {
+    protected Appender<ILoggingEvent> fileAppender(LoggingProperties loggingProperties) {
         RollingFileAppender<ILoggingEvent> appender = new RollingFileAppender<>();
         PatternLayoutEncoder encoder = new PatternLayoutEncoder();
         String logPattern = this.patterns.getProperty("logging.pattern.file", FILE_LOG_PATTERN);
@@ -182,52 +182,54 @@ public abstract class SpacedLogbackSystem extends LogbackLoggingSystem {
         if (logFile != null) {
             logFile.applyTo(defaultProperties);
         }
-        String path = space.getSpec().getPath() != null ? space.getSpec().getPath() :
-                space.getDefaultSpec().getPath() != null ? space.getDefaultSpec().getPath() :
-                        defaultProperties.contains(LoggingSystemProperties.LOG_PATH)
-                                ? defaultProperties.getProperty(LoggingSystemProperties.LOG_PATH) :
-                                DEFAULT_PATH;
+        String path = loggingProperties.getPath() != null ? loggingProperties.getPath() : DEFAULT_PATH;
         path = patterns.resolvePlaceholders(path);
-        String file = space.getSpec().getFile() != null
-                ? fileName(space.getSpec().getFile()) : fileName(space.getName());
+        String file = loggingProperties.getFile() != null
+                ? fileName(loggingProperties.getFile()) : fileName(appName);
         file = patterns.resolvePlaceholders(file);
         appender.setFile(path + "/" + file);
-        setRollingPolicy(appender, space, path, file);
+        setRollingPolicy(appender, loggingProperties, path, file);
 
         //  threshold config
+        // error log using this block code
         ThresholdFilter thresholdFilter = new ThresholdFilter();
-        if (space.getSpec().getThreshold() != null) {
-            thresholdFilter.setLevel(space.getSpec().getThreshold());
+        if (loggingProperties.getThreshold() != null) {
+            thresholdFilter.setLevel(loggingProperties.getThreshold());
             start(thresholdFilter);
             appender.addFilter(thresholdFilter);
         }
 
-        appender("SPACE-" + space.getName(), appender);
+        String appenderName = loggingProperties.getAppenderName() != null ?
+                loggingProperties.getAppenderName() : appName;
+        appender(appenderName, appender);
         return appender;
     }
 
-    private void setRollingPolicy(RollingFileAppender<ILoggingEvent> appender, Space space, String path, String file) {
+    private void setRollingPolicy(RollingFileAppender<ILoggingEvent> appender, LoggingProperties loggingProperties,
+                                  String path, String file) {
         SizeAndTimeBasedRollingPolicy<ILoggingEvent> rollingPolicy = new SizeAndTimeBasedRollingPolicy<>();
         String dirName = new File(path, file).getParent();
-        rollingPolicy.setFileNamePattern(dirName + "/%d{dd,aux}/" + file + ".%d{yyyy-MM-dd-HH}.%i");
-        String maxFileSize = space.getSpec().getMaxFileSize() != null ? space.getSpec().getMaxFileSize() :
-                space.getDefaultSpec().getMaxFileSize() != null ? space.getDefaultSpec().getMaxFileSize() :
-                        DEFAULT_FILE_SIZE;
+        String rollingFilePattern = loggingProperties.getRollingFilePattern() != null ?
+                loggingProperties.getRollingFilePattern() : DEFAULT_FILE_PATTERN;
+        String fileNamePattern = dirName + File.separator + file.split(".log")[0] + "-" +
+                rollingFilePattern + ".log";
+        rollingPolicy.setFileNamePattern(fileNamePattern);
+        String maxFileSize = loggingProperties.getMaxFileSize() != null ? loggingProperties.getMaxFileSize() :
+                DEFAULT_FILE_SIZE;
         setMaxFileSize(rollingPolicy, maxFileSize);
 
         // total size cap
-        String totalSizeCap = space.getSpec().getTotalSizeCap() != null ? space.getSpec().getTotalSizeCap() :
-                space.getDefaultSpec().getTotalSizeCap() != null ? space.getDefaultSpec().getTotalSizeCap() :
-                        DEFAULT_TOTAL_SIZE_CAP;
+        String totalSizeCap = loggingProperties.getTotalSizeCap() != null ? loggingProperties.getTotalSizeCap() :
+                DEFAULT_TOTAL_SIZE_CAP;
 
         setTotalSizeCap(rollingPolicy, totalSizeCap);
 
-        int maxHistory = space.getSpec().getMaxHistory() != null ? space.getSpec().getMaxHistory() :
-                space.getDefaultSpec().getMaxHistory() != null ? space.getDefaultSpec().getMaxHistory() :
-                        DEFAULT_MAX_HISTORY;
+        int maxHistory = loggingProperties.getMaxHistory() != null ? loggingProperties.getMaxHistory() :
+                DEFAULT_MAX_HISTORY;
         rollingPolicy.setMaxHistory(maxHistory);
 
         appender.setRollingPolicy(rollingPolicy);
+        // 启动时会尝试清除超过数量的日志文件
         rollingPolicy.setCleanHistoryOnStart(true);
         rollingPolicy.setParent(appender);
 //        rollingPolicy.setCleanHistoryOnStart(true);
